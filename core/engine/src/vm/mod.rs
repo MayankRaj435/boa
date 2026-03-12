@@ -100,6 +100,9 @@ pub struct Vm {
 
     #[cfg(feature = "trace")]
     pub(crate) trace: bool,
+
+    #[cfg(feature = "trace")]
+    pub(crate) trace_call_frame_info: Option<(u32, usize)>,
 }
 
 /// The stack holds the [`JsValue`]s for the calling convention and registers.
@@ -336,6 +339,8 @@ impl Vm {
             shadow_stack: ShadowStack::default(),
             #[cfg(feature = "trace")]
             trace: false,
+            #[cfg(feature = "trace")]
+            trace_call_frame_info: None,
         }
     }
 
@@ -608,7 +613,6 @@ impl Context {
             )
         };
 
-        println!("{}", frame.code_block);
         println!(
             "{msg:-^width$}",
             width = Self::COLUMN_WIDTH * Self::NUMBER_OF_COLUMNS - 10
@@ -643,20 +647,13 @@ impl Context {
             .code_block()
             .instruction_operands(&instruction);
 
-        match opcode {
-            Opcode::Call
-            | Opcode::CallSpread
-            | Opcode::CallEval
-            | Opcode::CallEvalSpread
-            | Opcode::New
-            | Opcode::NewSpread
-            | Opcode::Return
-            | Opcode::SuperCall
-            | Opcode::SuperCallSpread
-            | Opcode::SuperCallDerived => {
-                println!();
-            }
-            _ => {}
+        let current_fp = self.vm.frame().fp;
+        let current_cb = self.vm.frame().code_block() as *const _ as usize;
+        let pcb = self.vm.trace_call_frame_info.unwrap_or((u32::MAX, 0));
+
+        if pcb.0 != current_fp || pcb.1 != current_cb {
+            self.trace_call_frame();
+            self.vm.trace_call_frame_info = Some((current_fp, current_cb));
         }
 
         let instant = Instant::now();
@@ -855,11 +852,6 @@ impl Context {
     /// "clock cycles" have passed.
     #[allow(clippy::future_not_send)]
     pub(crate) async fn run_async_with_budget(&mut self, budget: u32) -> CompletionRecord {
-        #[cfg(feature = "trace")]
-        if self.vm.trace {
-            self.trace_call_frame();
-        }
-
         let mut runtime_budget: u32 = budget;
 
         while let Some(byte) = self
@@ -895,11 +887,6 @@ impl Context {
     }
 
     pub(crate) fn run(&mut self) -> CompletionRecord {
-        #[cfg(feature = "trace")]
-        if self.vm.trace {
-            self.trace_call_frame();
-        }
-
         while let Some(byte) = self
             .vm
             .frame()
